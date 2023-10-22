@@ -161,6 +161,10 @@ public extension Parser {
         MapParser(wrapped: self, trafo: trafo)
     }
     
+    func output<T>(_ out: @escaping @autoclosure () -> T) -> MapParser<Self, T> {
+        map {_ in out()}
+    }
+    
     func compactMap<T>(_ trafo: @escaping (Output) -> T?) -> CompactMapParser<Self, T> {
         CompactMapParser(wrapped: self, trafo: trafo)
     }
