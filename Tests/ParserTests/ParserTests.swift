@@ -25,7 +25,7 @@ final class ParserTests: XCTestCase {
     
     func testRecursion() {
         
-        struct Repeat2<Pattern: Parser, Separator : Parser> : ParserWrapper where Pattern.Tape == Separator.Tape {
+        struct Repeat<Pattern: Parser, Separator : Parser> : ParserWrapper where Pattern.Tape == Separator.Tape {
             
             let pattern : Pattern
             let separator : Separator
@@ -43,7 +43,7 @@ final class ParserTests: XCTestCase {
             
         }
         
-        XCTAssertEqual(Repeat2(pattern: Exactly("Fizz"), separator: Exactly(",")).parse("Fizz,Fizz,Bla").map(EquatablePair.init),
+        XCTAssertEqual(Repeat(pattern: Exactly("Fizz"), separator: Exactly(",")).parse("Fizz,Fizz,Bla").map(EquatablePair.init),
                        [EquatablePair(first: ["Fizz", "Fizz"], second: ",Bla")])
         
     }
