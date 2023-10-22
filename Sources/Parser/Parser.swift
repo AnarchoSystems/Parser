@@ -11,8 +11,8 @@ public protocol Parser<Tape, Output> {
     func parse(_ input: Tape) -> [(output: Output, tail: Tape)]
 }
 
-public extension Parser where Tape == Substring {
-    func parse(_ input: String) -> [(output: Output, tail: Tape)] {
-        parse(input.dropFirst(0))
+public extension Parser {
+    func parse<S : Collection>(_ input: S) -> [(output: Output, tail: Tape)] where S.SubSequence == Tape {
+        parse(input[...])
     }
 }
