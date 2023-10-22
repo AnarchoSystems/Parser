@@ -23,7 +23,9 @@ public struct Exactly : ExpressibleByStringLiteral, Parser {
     }
 }
 
-public struct Repeat<Pattern: Parser, Separator: Parser> : Parser where Pattern.Tape == Separator.Tape {
+public struct Repeat<Pattern: Parser, Separator: Parser> : ParserWrapper where Pattern.Tape == Separator.Tape {
+   
+    public typealias Output = [Pattern.Output]
     
     public let pattern : Pattern
     public let separator : Separator
@@ -33,41 +35,20 @@ public struct Repeat<Pattern: Parser, Separator: Parser> : Parser where Pattern.
         self.separator = separator
     }
     
-    public func parse(_ input: Pattern.Tape) -> [(output: [Pattern.Output], tail: Pattern.Tape)] {
-        
-        var temporaryResults = pattern.parse(input).map{([$0], $1, false)}
-        var newResults : [([Pattern.Output], Pattern.Tape, Bool)] = []
-        
-        while temporaryResults.contains(where: {!$2}) {
-            for idx in temporaryResults.indices {
-                if temporaryResults[idx].2 {
-                    newResults.append(temporaryResults[idx])
-                    continue
-                }
-                var isFirstTime = true
-                for (_, newTail) in separator.parse(temporaryResults[idx].1) {
-                    for (result, newNewTail) in pattern.parse(newTail) {
-                        if isFirstTime {
-                            temporaryResults[idx].0.append(result)
-                            newResults.append((temporaryResults[idx].0, newNewTail, false))
-                            isFirstTime = false
-                            continue
-                        }
-                        temporaryResults[idx].0[temporaryResults[idx].0.count - 1] = result
-                        newResults.append((temporaryResults[idx].0, newNewTail, false))
-                    }
-                }
-                if isFirstTime {
-                    newResults.append(temporaryResults[idx])
-                    newResults[newResults.count - 1].2 = true
-                }
-            }
-            temporaryResults = newResults
-            newResults = []
-        }
-        
-        return temporaryResults.map{args in (output: args.0, tail: args.1)}
-        
+    @ParserBuilder
+    public var body : some Parser<Pattern.Tape, (Pattern.Output, [Pattern.Output])> {
+        pattern
+        many.map(\.1)*
+    }
+    
+    public func transform(_ bodyResult: (Pattern.Output, [Pattern.Output])) -> [Pattern.Output] {
+        [bodyResult.0] + bodyResult.1
+    }
+    
+    @ParserBuilder
+    public var many : some Parser<Pattern.Tape, (Separator.Output, Pattern.Output)> {
+        separator
+        pattern
     }
     
 }

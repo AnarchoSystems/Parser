@@ -62,6 +62,91 @@ public struct Success<Tape, Output> : Parser {
     }
 }
 
+postfix operator *
+postfix operator +
+postfix operator -?
+
+public struct Multiple<Pattern : Parser> : Parser {
+    
+    public let pattern : Pattern
+    
+    public init(pattern: Pattern) {
+        self.pattern = pattern
+    }
+    
+    public func parse(_ input: Pattern.Tape) -> [(output: [Pattern.Output], tail: Pattern.Tape)] {
+        var results = pattern.parse(input).map{([$0], $1, false)}
+        if results.isEmpty {
+            return [([], input)]
+        }
+        var newResults : [([Pattern.Output], Pattern.Tape, Bool)] = []
+        while results.contains(where: {!$2}) {
+            for idx in results.indices {
+                if results[idx].2 {
+                    newResults.append(results[idx])
+                    continue
+                }
+                var done = true
+                for (newResult, newTail) in pattern.parse(results[idx].1) {
+                    if done {
+                        results[idx].0.append(newResult)
+                    }
+                    else {
+                        results[idx].0[results[idx].0.count - 1] = newResult
+                    }
+                    results[idx].1 = newTail
+                    newResults.append(results[idx])
+                    done = false
+                }
+                if done {
+                    newResults.append(results[idx])
+                    newResults[newResults.count - 1].2 = true
+                }
+            }
+            results = newResults
+            newResults = []
+        }
+        return results.map{(output: $0.0, tail: $0.1)}
+    }
+    
+}
+
+public struct AtLeastOne<Pattern: Parser> : ParserWrapper {
+    
+    public typealias Output = [Pattern.Output]
+    
+    public let pattern : Pattern
+    
+    public init(pattern: Pattern) {
+        self.pattern = pattern
+    }
+    
+    @ParserBuilder
+    public var body: some Parser<Pattern.Tape, (Pattern.Output, [Pattern.Output])> {
+        pattern
+        pattern*
+    }
+    
+    public func transform(_ bodyResult: (Pattern.Output, [Pattern.Output])) -> [Pattern.Output] {
+        [bodyResult.0] + bodyResult.1
+    }
+    
+}
+
+public struct Maybe<Pattern: Parser> : ParserWrapper {
+    
+    public let pattern : Pattern
+    
+    public init(pattern: Pattern) {
+        self.pattern = pattern
+    }
+    
+    public var body: some Parser<Pattern.Tape, Pattern.Output?> {
+        pattern.map{$0 as Pattern.Output?}.orSuccess(nil)
+    }
+    
+}
+
 public extension Parser {
     
     static func |<Other : Parser>(lhs: Self, rhs: Other) -> some Parser<Tape, Output> where Other.Tape == Tape, Other.Output == Output {
@@ -95,4 +180,17 @@ public extension Parser {
     func orSuccess() -> some Parser<Tape, Void> {
         mapVoid() || Success(())
     }
+    
+    static postfix func *(arg: Self) -> some Parser<Tape, [Output]> {
+        Multiple(pattern: arg)
+    }
+    
+    static postfix func +(arg: Self) -> some Parser<Tape, [Output]> {
+        AtLeastOne(pattern: arg)
+    }
+    
+    static postfix func -?(arg: Self) -> some Parser<Tape, Output?> {
+        Maybe(pattern: arg)
+    }
+    
 }

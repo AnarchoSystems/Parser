@@ -48,6 +48,24 @@ final class ParserTests: XCTestCase {
         
     }
     
+    func testMany() {
+        
+        let pattern = Exactly("Fizz")*
+        
+        XCTAssertEqual(pattern.parse("Foo").map(EquatablePair.init), [EquatablePair(first: [], second: "Foo")])
+        XCTAssertEqual(pattern.parse("FizzFizz").map(EquatablePair.init), [EquatablePair(first: ["Fizz", "Fizz"], second: "")])
+        
+    }
+    
+    func testAtLeastOnce() {
+        
+        let pattern = Exactly("Fizz")+
+        
+        XCTAssertEqual(pattern.parse("Foo").count, 0)
+        XCTAssertEqual(pattern.parse("FizzFizz").map(EquatablePair.init), [EquatablePair(first: ["Fizz", "Fizz"], second: "")])
+        
+    }
+    
     func testMatch() {
         
         XCTAssertEqual(MatchString(\Character.isWhitespace).parse("  Foo  ").map(EquatablePair.init),
