@@ -1,61 +1,90 @@
+import RegexBuilder
 import XCTest
 @testable import Parser
 
+struct EquatablePair<T : Equatable, U : Equatable> : Equatable {
+    let first : T
+    let second : U
+}
+
+// MARK: TESTS
+
 final class ParserTests: XCTestCase {
     
+    func testExact() {
+        XCTAssertEqual(Exactly("Fizz").parse("FizzFizz").map(EquatablePair.init),
+                       [EquatablePair(first: "Fizz", second: "Fizz")])
+    }
     
-    func testExpr() throws {
+    func testRepeat() {
         
-        let grammar = Expr()
-        
-        let result = grammar.apply("(14+7)*2").removingDuplicates().removingIncompleteInterpretations()
-        
-        XCTAssert(result.isSuccess && result.possibleInterpretations.first!.value == 42, "\(result)")
-        XCTAssert(grammar.apply(")").isFailure)
+        XCTAssertEqual(Repeat(pattern: Exactly("Fizz"), separator: Exactly(",")).parse("Fizz,Fizz,Bla").map(EquatablePair.init),
+                       [EquatablePair(first: ["Fizz", "Fizz"], second: ",Bla")])
         
     }
     
-    func testStringParser() {
+    func testRecursion() {
         
-        let grammar = StringParser(allowedCharacters: {!$0.isWhitespace})
-        
-        let result1 = grammar.apply("Bla bla \n bla")
-        
-        guard let (Bla, rest) = result1.possibleInterpretations.first else {
-            return XCTFail()
+        struct Repeat2<Pattern: Parser, Separator : Parser> : ParserWrapper where Pattern.Tape == Separator.Tape {
+            
+            let pattern : Pattern
+            let separator : Separator
+            
+            var body : some Parser<Pattern.Tape, [Pattern.Output]> {
+                recursion.map{[$0] + $2} || pattern.map{[$0]}
+            }
+            
+            @ParserBuilder
+            var recursion : some Parser<Pattern.Tape, (Pattern.Output, Separator.Output, [Pattern.Output])> {
+                pattern
+                separator
+                self
+            }
+            
         }
         
-        XCTAssert(Bla == "Bla", String(Bla))
-        
-        let result2 = grammar.apply(rest)
-        
-        guard let (bla, lastBla) = result2.possibleInterpretations.first else {
-            return XCTFail()
-        }
-        
-        XCTAssert(bla == "bla", String(bla))
-        
-        let result3 = grammar.apply(lastBla)
-        
-        XCTAssert(result3.isUnique)
-        
-        guard let (bla2, empty) = result3.possibleInterpretations.first else {
-            return XCTFail()
-        }
-        
-        XCTAssert(bla2 == bla, String(bla2))
-        XCTAssert(empty.isEmpty, String(empty))
-        
-        
+        XCTAssertEqual(Repeat2(pattern: Exactly("Fizz"), separator: Exactly(",")).parse("Fizz,Fizz,Bla").map(EquatablePair.init),
+                       [EquatablePair(first: ["Fizz", "Fizz"], second: ",Bla")])
         
     }
     
-    func testAddr() {
+    func testMatch() {
+        
+        XCTAssertEqual(MatchString(\Character.isWhitespace).parse("  Foo  ").map(EquatablePair.init),
+                       [EquatablePair(first: "  ", second: "Foo  ")])
+        
+    }
+    
+    func testRegex() {
+        
+        XCTAssertEqual(#/[0-9]*.?[0-9]*/#.parse("12342143.123423abcdef").map(EquatablePair.init),
+                       [EquatablePair(first: "12342143.123423", second: "abcdef")])
+        
+    }
+    
+    func testMatrix() {
+        
+        let test =
+"""
+
+[1234.5, 654, 13;
+54345.25, 444, 123]
+
+"""
+        
+        let result = MatrixParser().parse(test)
+        
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.map(\.output).first!, Matrix(rows: 2, cols: 3, data: [1234.5, 654, 13, 54345.25, 444, 123]))
+        
+    }
+    
+    func testAddress() {
         
         
         let grammar = PostAnschrift()
         
-        XCTAssert(grammar.apply("Bla bla").isFailure)
+        XCTAssertEqual(grammar.parse("Bla bla").count, 0)
         
         let txt =
 """
@@ -64,145 +93,15 @@ StrasseOhneLeerzeichen 42
 12345 KeineLeerzeichenStadt\t\n
 """
         
-        let result = grammar.apply(txt)
+        let result = grammar.parse(txt.dropFirst(0))
         
-        XCTAssert(result.isSuccess)
-        
-    }
-    
-    func testSplitParser() {
-        
-        let grammar = SplitParser(strategy: DefaultIntParseStrategy(),
-                                  splitCharacter: ",")
-        
-        let str = "1234,6543,365a,a,,42,,"
-        
-        let result = grammar.apply(str)
-        
-        guard let (ints, tail) = result.possibleInterpretations.first else {
-            return XCTFail()
-        }
-        
-        XCTAssert(ints == [1234, 6543, 365], "\(ints)")
-        XCTAssert(tail == "a,a,,42,,", String(tail))
-        
-    }
-    
-    func testWhitespace() {
-        
-        let grammar = StringParser(allowedCharacters: \.isWhitespace)
-        
-        let result = grammar.apply("  ")
-        
-        guard result.isSuccess else {
-            return XCTFail("\(result.possibleInterpretations)")
-        }
-        
-    }
-    
-    func testSingleMember() {
-        
-        let testStr =
-    """
-    "foo" : "bar"
-    """
-        
-        let grammar = JSONSingleMemberStrategy()
-        
-        let result = grammar.apply(testStr)
-        
-        guard result.isSuccess else {
-            return XCTFail("\(result.possibleInterpretations)")
-        }
-        
-        guard let (json1, _) = result.possibleInterpretations.first else {
-            return XCTFail()
-        }
-        
-        XCTAssertEqual(json1.0, "foo")
-        XCTAssertEqual(json1.1, .string("bar"))
-        
-    }
- 
-    func testJSON() {
-        
-        let testStr =
-    """
-    {"foo" : "bar"}
-    """
-        
-        let grammar = JSONParser()
-        
-        let result = grammar.apply(testStr)
-        
-        guard result.isSuccess else {
-            return XCTFail("\(result.possibleInterpretations)")
-        }
-        
-        guard let (json1, _) = result.possibleInterpretations.first else {
-            return XCTFail()
-        }
-        
-        let json2 = try! JSONDecoder().decode(JSON.self, from: Data(testStr.utf8))
-        
-        XCTAssert(json1 == json2, "\(json1)")
+        XCTAssertEqual(result.count, 1)
         
     }
     
 }
 
-
-/*
- 
- expr -> term + expr | term
- term -> factor * term | factor
- factor -> (expr) | Int
- 
- */
-
-
-struct Expr : ParserWrapper {
-    
-    @ParserBuilder
-    var body : some Parser<Substring, Int, Substring> {
-        
-        ZipParser {
-            Term()
-            "+" as SingleWordParser
-            Expr()
-        }.map{term, _, expr in term + expr} | Term()
-        
-    }
-    
-}
-
-struct Term : ParserWrapper {
-    
-    @ParserBuilder
-    var body : some Parser<Substring, Int, Substring> {
-        ZipParser {
-            Factor()
-            "*" as SingleWordParser
-            Term()
-        }.map{factor, _, term in factor * term} | Factor()
-    }
-    
-}
-
-
-struct Factor : ParserWrapper {
-    
-    @ParserBuilder
-    var body : some Parser<Substring, Int, Substring> {
-        ZipParser {
-            "(" as SingleWordParser
-            Expr()
-            ")" as SingleWordParser
-        }.map{_, expr, _ in expr} | UIntParser()
-    }
-    
-}
-
+// MARK: ADDRESS
 
 /*
  
@@ -239,25 +138,26 @@ struct ParsedCity {
     let zipCode : Int
 }
 
-typealias StringUntilWhitespaceParser = StringParser
-
-extension StringParser {
-    
-    init() {
-        self = .init(allowedCharacters: {$0 == "\n" || !$0.isWhitespace})
+struct StringUntilWhitespace : Parser {
+    let allowedChars : (Character) -> Bool = {$0 == "\n" || !$0.isWhitespace}
+    func parse(_ input: Substring) -> [(output: Substring, tail: Substring)] {
+        let result = input.prefix(while: allowedChars)
+        let tail = input.dropFirst(result.count).drop(while: {!allowedChars($0)})
+        return [(result, tail)]
     }
-    
 }
 
 struct PostAnschrift : ParserWrapper {
     
+    var body : some Parser<Substring, ParsedAddress> {
+        parser.map(ParsedAddress.init)
+    }
+    
     @ParserBuilder
-    var body : some Parser<Substring, ParsedAddress, Substring> {
-        ZipParser {
-            PersonenTeil()
-            Strasse()
-            Stadt()
-        }.map(ParsedAddress.init)
+    var parser : some Parser<Substring, (ParsedPerson, ParsedStreet, ParsedCity)> {
+        PersonenTeil()
+        Strasse()
+        Stadt()
     }
     
 }
@@ -266,14 +166,15 @@ struct PostAnschrift : ParserWrapper {
 struct PersonenTeil : ParserWrapper {
     
     @ParserBuilder
-    var body : some Parser<Substring, ParsedPerson, Substring> {
-        ZipParser {
-            TitelTeil()
-            NamensTeil()
-            "\n" as SingleWordParser
-        }.map{maybeTitle, person, _ in
-            ParsedPerson(title: maybeTitle, firstName: person.firstName, lastName: person.lastName)
-        }
+    var body : some Parser<Substring, (String?, ParsedPerson, String)> {
+        TitelTeil()
+        NamensTeil()
+        Exactly("\n")
+    }
+    
+    func transform(_ bodyResult: (String?, ParsedPerson, String)) -> ParsedPerson {
+        let (maybeTitle, person, _) = bodyResult
+        return ParsedPerson(title: maybeTitle, firstName: person.firstName, lastName: person.lastName)
     }
     
 }
@@ -281,8 +182,8 @@ struct PersonenTeil : ParserWrapper {
 struct TitelTeil : ParserWrapper {
     
     @ParserBuilder
-    var body : some Parser<Substring, String?, Substring> {
-        StringUntilWhitespaceParser().map{String($0) as String?}.orSuccess(nil)
+    var body : some Parser<Substring, String?> {
+        StringUntilWhitespace().map{String($0) as String?} | Success(nil)
     }
     
 }
@@ -290,11 +191,14 @@ struct TitelTeil : ParserWrapper {
 struct NamensTeil : ParserWrapper {
     
     @ParserBuilder
-    var body : some Parser<Substring, ParsedPerson, Substring> {
-        ZipParser {
-            StringUntilWhitespaceParser()
-            StringUntilWhitespaceParser()
-        }.map{first, last in ParsedPerson(title: nil, firstName: String(first), lastName: String(last))}
+    var body : some Parser<Substring, (Substring, Substring)> {
+        StringUntilWhitespace()
+        StringUntilWhitespace()
+    }
+    
+    func transform(_ bodyResult: (Substring, Substring)) -> ParsedPerson {
+        let (first, last) = bodyResult
+        return ParsedPerson(title: nil, firstName: String(first), lastName: String(last))
     }
     
 }
@@ -302,236 +206,91 @@ struct NamensTeil : ParserWrapper {
 struct Strasse : ParserWrapper {
     
     @ParserBuilder
-    var body : some Parser<Substring, ParsedStreet, Substring> {
-        ZipParser {
-            StringUntilWhitespaceParser()
-            UIntParser()
-            "\n" as SingleWordParser
-        }.map{name, number, _ in ParsedStreet(name: String(name), number: number)}
+    var body : some Parser<Substring, (Substring, Int, String)> {
+        StringUntilWhitespace()
+        Int.defaultParser
+        Exactly("\n")
+    }
+    
+    func transform(_ bodyResult: (Substring, Int, String)) -> ParsedStreet {
+        let (name, number, _) = bodyResult
+        return ParsedStreet(name: String(name), number: number)
     }
     
 }
 
 
 struct Stadt : ParserWrapper {
-    
+   
     @ParserBuilder
-    var body : some Parser<Substring, ParsedCity, Substring> {
-        ZipParser {
-            UIntParser()
-            " " as SingleWordParser
-            StringUntilWhitespaceParser()
-            "\n" as SingleWordParser
-        }.map{zip, _, name, _ in ParsedCity(name: String(name), zipCode: zip)}
+    var body : some Parser<Substring, (Int, String, Substring, String)> {
+        Int.defaultParser
+        Exactly(" ")
+        StringUntilWhitespace()
+        Exactly("\n")
+    }
+    
+    func transform(_ bodyResult: (Int, String, Substring, String)) -> ParsedCity {
+        let (zip, _, name, _) = bodyResult
+        return ParsedCity(name: String(name), zipCode: zip)
     }
     
 }
 
-// https://betterprogramming.pub/how-to-encode-and-decode-any-json-safely-in-swift-d5b2b8e2e1e3
-
-indirect enum JSON : Hashable, Decodable {
-    
-    case string(String)
-    case number(Float)
-    case boolean(Bool)
-    case array([JSON])
-    case object([String : JSON])
-    case null
-    
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-
-            if let value = try? container.decode(Float.self) {
-              self = .number(value)
-              return
-            }
-
-            if let value = try? container.decode(Bool.self) {
-              self = .boolean(value)
-              return
-            }
-
-            if let value = try? container.decode(String.self) {
-              self = .string(value)
-              return
-            }
-
-            if let value = try? container.decode([JSON].self) {
-              self = .array(value)
-              return
-            }
-
-            if let value = try? container.decode([String: JSON].self) {
-              self = .object(value)
-              return
-            }
-
-            if
-              let container = try? decoder.singleValueContainer(),
-              container.decodeNil()
-            {
-              self = .null
-              return
-            }
-
-            throw DecodingError.dataCorrupted(
-              .init(
-                codingPath: container.codingPath,
-                debugDescription: "Cannot decode JSON"
-              )
-            )
-    }
-    
-}
-
-
-struct JSONParser : ParserWrapper {
-    
-    @ParserBuilder
-    var body : some Parser<Substring, JSON, Substring> {
-        ZipParser {
-            StringParser(allowedCharacters: (\.isWhitespace)).orSuccess()
-            JSONValueParser()
-            StringParser(allowedCharacters: (\.isWhitespace)).orSuccess()
+extension Int {
+    static var defaultParser : some Parser<Substring, Int> {
+        Regex {
+            TryCapture(.localizedInteger(locale: .init(languageCode: .english, languageRegion: .unitedStates)),
+                       transform: {Int($0)})
         }.map(\.1)
     }
-    
 }
 
-struct JSONValueParser : ParserWrapper {
-    
-    @ParserBuilder
-    var body : some Parser<Substring, JSON, Substring> {
-        let first =
-        JSONObjectParser().debugPrintStr("OBJECT") | JSONArrayParser().debugPrintStr("ARRAY")
-        let second = JSONStringParser().map(JSON.string).debugPrintStr("STRING") | JSONNumberParser().debugPrintStr("NUMBER")
-        let third = (["true" : JSON.boolean(true),
-                     "false" : .boolean(false),
-                      "null" : .null] as WordParser<JSON>)
-        (first | second | third.debugPrintStr("LIT"))
-    }
-    
+// MARK: MATRIX
+
+// row major
+struct Matrix : Equatable {
+    let rows : Int
+    let cols : Int
+    var data : [Float]
 }
 
-struct JSONObjectParser : ParserWrapper {
+struct MatrixParser : ParserWrapper {
     
-    @ParserBuilder
-    var body : some Parser<Substring, JSON, Substring> {
-        ZipParser {
-            "{" as SingleWordParser
-            StringParser(allowedCharacters: (\.isWhitespace)).orSuccess()
-            "}" as SingleWordParser
-        }.map{_, _, _ in JSON.object([:])} |
-        ZipParser {
-            "{" as SingleWordParser
-            JSONMembersParser()
-            "}" as SingleWordParser
-        }.map {_,
-            dict, _ in .object(dict)
+    var body: some Parser<Substring, Matrix> {
+        pattern.compactMap{_, _, lines, _, _ in
+            guard let first = lines.first else {
+                return Matrix(rows: 0, cols: 0, data: [])
+            }
+            guard lines.allSatisfy({$0.count == first.count}) else {
+                return nil
+            }
+            return Matrix(rows: lines.count, cols: first.count, data: lines.flatMap{$0})
         }
     }
     
-}
-
-struct JSONArrayParser : ParserWrapper {
-    
     @ParserBuilder
-    var body : some Parser<Substring, JSON, Substring> {
-        ZipParser {
-            ("[" as SingleWordParser)
-            StringParser(allowedCharacters: (\.isWhitespace)).orSuccess()
-            "]" as SingleWordParser
-        }.map{_, _, _ in JSON.array([])} |
-        ZipParser {
-            "[" as SingleWordParser
-            JSONElementsParser().debugPrintStr("ELEMENT")
-            "]" as SingleWordParser
-        }.map {_, array, _ in .array(array)}
+    var pattern : some Parser<Substring, (Substring, String, [[Float]], String, Substring)> {
+        MatchString(\.isWhitespace)
+        Exactly("[")
+        manyLines
+        Exactly("]")
+        MatchString(\.isWhitespace)
     }
     
-}
-
-struct JSONElementsParser : ParserWrapper {
-    
-    @ParserBuilder
-    var body : some Parser<Substring, [JSON], Substring> {
-        SplitParser(strategy: JSONSingleElementStrategy(), splitCharacter: ",")
+    var manyLines : some Parser<Substring, [[Float]]> {
+        Repeat(pattern: line, separator: #/[ \t\n\r]*;[ \t\n\r]*/#)
     }
     
-}
-
-struct JSONMembersParser : ParserWrapper {
-    
-    @ParserBuilder
-    var body : some Parser<Substring, [String : JSON], Substring> {
-        ZipParser {
-            JSONSingleMemberStrategy()
-            ZipParser {
-                "," as SingleWordParser
-                self
-            }.map{$1}.orSuccess([String : JSON]())
-        }.map{(val : (String, JSON), dict : [String : JSON]) -> [String : JSON] in
-            var copy = dict
-            copy[val.0] = val.1
-            return copy
-        }
+    var line : some Parser<Substring, [Float]> {
+        Repeat(pattern: number, separator: #/[ \t\n\r]*,[ \t\n\r]*/#)
     }
     
-}
-
-struct JSONSingleElementStrategy : EagerParseStrategy {
-    
-    func parse(_ input: Substring) -> JSON? {
-        
-        let grammar = JSONParser()
-        let result = grammar.apply(input)
-        
-        return result.possibleInterpretations.lazy.filter{$1.isEmpty}.min{$0.tail.count < $1.tail.count}?.value
-        
-    }
-    
-}
-
-struct JSONSingleMemberStrategy : ParserWrapper {
-    
-    @ParserBuilder
-    var body : some Parser<Substring, (String, JSON), Substring> {
-        
-        ZipParser {
-            StringParser(allowedCharacters: (\.isWhitespace)).orSuccess()
-            JSONStringParser()
-            StringParser(allowedCharacters: \.isWhitespace).orSuccess().debugPrint()
-            (" : " as SingleWordParser)
-            StringParser(allowedCharacters: (\.isWhitespace)).orSuccess()
-            JSONParser()
-        }.map{_, key, _, _, _, value in (key, value)}
-        
-    }
-    
-}
-
-struct JSONStringParser : ParserWrapper {
-    
-    @ParserBuilder
-    var body : some Parser<Substring, String, Substring> {
-        ZipParser {
-            "\"" as SingleWordParser
-            StringParser(droppingUnwanted: false,
-                         allowedCharacters: {!"\"{}[]".contains($0)})
-            "\"" as SingleWordParser
-        }.map{_, str, _ in String(str)}
-    }
-    
-}
-
-struct JSONNumberParser : ParserWrapper {
-    
-    @ParserBuilder
-    var body : some Parser<Substring, JSON, Substring> {
-        ZipParser {
-            "-" as SingleWordParser
-            UFloatParser()
-        }.map{_, num in JSON.number(-num)} | UFloatParser().map(JSON.number)
+    var number : some Parser<Substring, Float> {
+        Regex {
+            TryCapture(.localizedDouble(locale: .init(languageCode: .english, languageRegion: .unitedStates)),
+                       transform: {Float($0)})
+        }.map(\.1)
     }
     
 }

@@ -1,245 +1,109 @@
 //
 //  Lib.swift
-//  
 //
-//  Created by Markus Kasperczyk on 13.02.22.
+//
+//  Created by Markus Kasperczyk on 21.10.23.
 //
 
-import Foundation
-
-
-public protocol EagerParseStrategy where Input.SubSequence == Input {
-    associatedtype Input : Collection
-    associatedtype Value
-    func parse(_ input: Input) -> Value?
-}
-
-public struct MaxParser<Strategy : EagerParseStrategy> : Parser {
-    
-    @usableFromInline
-    let strategy : Strategy
-    
-    public init(strategy: Strategy) {
-        self.strategy = strategy
+public struct Exactly : ExpressibleByStringLiteral, Parser {
+    public let searched : String
+    public init(_ searched: String) {
+        self.searched = searched
     }
-    
-    @inlinable
-    public func apply(_ input: Strategy.Input, onSuccess: (Strategy.Value, Strategy.Input) -> Void) {
-        
-        guard input.count > 0 else {
-            return
-        }
-        
-        var value : Strategy.Value?
-        var length = 0
-        
-        for matchLength in 1...input.count {
-            guard let recognized = strategy.parse(input.prefix(matchLength)) else {
-                break
-            }
-            value = recognized
-            length = matchLength
-        }
-        
-        if let vals = value.map({[($0, input.dropFirst(length))]}) {
-            for (val, tail) in vals {
-                onSuccess(val, tail)
-            }
-        }
-        
-    }
-    
-}
-
-
-public protocol DefaultParsable {
-    associatedtype DefaultStrategy : EagerParseStrategy
-    static var defaultParsingStrategy : DefaultStrategy {get}
-}
-
-public extension MaxParser where Strategy.Value : DefaultParsable {
-    
-    init() where Strategy == Strategy.Value.DefaultStrategy {
-        self = MaxParser(strategy: Strategy.Value.defaultParsingStrategy)
-    }
-    
-}
-
-public struct DefaultIntParseStrategy : EagerParseStrategy {
-    public init(){}
-    @inlinable
-    public func parse(_ input: Substring) -> Int? {
-        Int(input)
-    }
-}
-
-public struct DefaultFloatParseStrategy : EagerParseStrategy {
-    public init() {}
-    @inlinable
-    public func parse(_ input: Substring) -> Float? {
-        Float(input)
-    }
-}
-
-public struct DefaultDoubleParseStrategy : EagerParseStrategy {
-    public init() {}
-    @inlinable
-    public func parse(_ input: Substring) -> Double? {
-        Double(input)
-    }
-}
-
-extension Int : DefaultParsable {
-    public static let defaultParsingStrategy = DefaultIntParseStrategy()
-}
-
-extension Float : DefaultParsable {
-    public static let defaultParsingStrategy = DefaultFloatParseStrategy()
-}
-
-extension Double : DefaultParsable {
-    public static let defaultParsingStrategy = DefaultDoubleParseStrategy()
-}
-
-public typealias DefaultMaxParser<Value : DefaultParsable> = MaxParser<Value.DefaultStrategy>
-public typealias UFloatParser = DefaultMaxParser<Float>
-public typealias UIntParser = DefaultMaxParser<Int>
-public typealias UDoubleParser = DefaultMaxParser<Double>
-
-
-public struct SingleWordParser<T> : Parser {
-    
-    let word : Substring
-    let value : T
-    
-    public init(mapping word: String, to value: T) {
-        self.word = word.dropFirst(0)
-        self.value = value
-    }
-    
-    public func apply(_ input: Substring, onSuccess: (T, Substring) -> Void) {
-        if word == input.prefix(word.count) {
-            onSuccess(value, input.dropFirst(word.count))
-        }
-    }
-    
-}
-
-
-extension SingleWordParser: ExpressibleByUnicodeScalarLiteral where T == Void {
-    public typealias UnicodeScalarLiteralType = StringLiteralType
-}
-
-extension SingleWordParser: ExpressibleByExtendedGraphemeClusterLiteral where T == Void {
-    public typealias ExtendedGraphemeClusterLiteralType = StringLiteralType
-}
-
-extension SingleWordParser : ExpressibleByStringLiteral where T == Void {
-    
     public init(stringLiteral value: String) {
-        self = SingleWordParser(mapping: value, to: ())
+        self.searched = value
     }
-    
+    public func parse(_ input: Substring) -> [(output: String, tail: Substring)] {
+        if input.prefix(searched.count) == searched {
+            [(searched, input.dropFirst(searched.count))]
+        }
+        else {
+            []
+        }
+    }
 }
 
-
-public struct WordParser<T> : Parser, ExpressibleByDictionaryLiteral {
+public struct Repeat<Pattern: Parser, Separator: Parser> : Parser where Pattern.Tape == Separator.Tape {
     
-    let dict : [Substring : T]
+    public let pattern : Pattern
+    public let separator : Separator
     
-    public init(matching dict: [Substring : T]) {self.dict = dict}
-    
-    public init(dictionaryLiteral elements: (String, T)...) {
-        self.dict = .init(uniqueKeysWithValues: elements.map{($0.dropFirst(0), $1)})
+    public init(pattern: Pattern, separator: Separator) {
+        self.pattern = pattern
+        self.separator = separator
     }
     
-    public func apply(_ input: Substring, onSuccess: (T, Substring) -> Void) {
+    public func parse(_ input: Pattern.Tape) -> [(output: [Pattern.Output], tail: Pattern.Tape)] {
         
-        for (key, value) in dict {
-            if key == input.prefix(key.count) {
-                return onSuccess(value, input.dropFirst(key.count))
+        var temporaryResults = pattern.parse(input).map{([$0], $1, false)}
+        var newResults : [([Pattern.Output], Pattern.Tape, Bool)] = []
+        
+        while temporaryResults.contains(where: {!$2}) {
+            for idx in temporaryResults.indices {
+                if temporaryResults[idx].2 {
+                    newResults.append(temporaryResults[idx])
+                    continue
+                }
+                var isFirstTime = true
+                for (_, newTail) in separator.parse(temporaryResults[idx].1) {
+                    for (result, newNewTail) in pattern.parse(newTail) {
+                        if isFirstTime {
+                            temporaryResults[idx].0.append(result)
+                            newResults.append((temporaryResults[idx].0, newNewTail, false))
+                            isFirstTime = false
+                            continue
+                        }
+                        temporaryResults[idx].0[temporaryResults[idx].0.count - 1] = result
+                        newResults.append((temporaryResults[idx].0, newNewTail, false))
+                    }
+                }
+                if isFirstTime {
+                    newResults.append(temporaryResults[idx])
+                    newResults[newResults.count - 1].2 = true
+                }
             }
-        }
-    }
-    
-}
-
-
-extension WordParser : ExpressibleByArrayLiteral where T == Void {
-    
-    public init(arrayLiteral elements: String...) {
-        self = WordParser(matching: .init(elements.lazy.map{($0.dropFirst(0), ())}, uniquingKeysWith: {_, _ in }))
-    }
-    
-}
-
-
-public typealias SucceededParser<Input> = ReturnParser<Void, Input>
-
-
-public extension ReturnParser where Value == Void {
-    
-    init() {
-        self = ReturnParser(())
-    }
-    
-}
-
-
-public struct StringParser : Parser {
-    
-    let droppingUnwanted : Bool
-    let charSet : (Character) -> Bool
-    
-    public init(droppingUnwanted: Bool = true,
-                allowedCharacters: @escaping (Character) -> Bool) {
-        self.droppingUnwanted = droppingUnwanted
-        self.charSet = allowedCharacters
-    }
-    
-    public func apply(_ input: Substring, onSuccess: (Substring, Substring) -> Void) {
-        let result = input.prefix(while: charSet)
-        guard !result.isEmpty else {
-            return
-        }
-        let tailWithWhitespace = input.dropFirst(result.count)
-        onSuccess(result, droppingUnwanted ? tailWithWhitespace.drop(while: {!charSet($0)}) : tailWithWhitespace)
-    }
-    
-}
-
-
-public struct SplitParser<Strategy : EagerParseStrategy> : Parser where Strategy.Input == Substring {
-    
-    @usableFromInline
-    let strategy : Strategy
-    @usableFromInline
-    let splitCharacter : Character
-    
-    public init(strategy: Strategy,
-                splitCharacter: Character) {
-        self.strategy = strategy
-        self.splitCharacter = splitCharacter
-    }
-    
-    @inlinable
-    public func apply(_ input: Substring, onSuccess: ([Strategy.Value], Substring) -> Void) {
-       
-        var result = [Strategy.Value]()
-        var input = input
-        
-        while true {
-            let val = input.prefix{$0 != splitCharacter}
-            let max = MaxParser(strategy: strategy).apply(val)
-            guard let (value, tail) = max.possibleInterpretations.min(by: {$0.tail < $1.tail}) else {break}
-            result.append(value)
-            input = input.dropFirst(tail.isEmpty ? val.count + 1 : val.count - tail.count)
+            temporaryResults = newResults
+            newResults = []
         }
         
-        if result.count > 0 {
-            onSuccess(result, input)
-        }
+        return temporaryResults.map{args in (output: args.0, tail: args.1)}
         
+    }
+    
+}
+
+public struct Match<Tape : Collection, Output> : Parser where Tape.SubSequence == Tape {
+    
+    public let match : (Tape.Element) -> Bool
+    public let convert : (Tape.SubSequence) -> Output
+    
+    public init(_ match: @escaping (Tape.Element) -> Bool, convert: @escaping (Tape.SubSequence) -> Output) {
+        self.match = match
+        self.convert = convert
+    }
+    
+    public init(_ match: @escaping (Tape.Element) -> Bool) where Output == Tape.SubSequence {
+        self.match = match
+        self.convert = {$0}
+    }
+    
+    public func parse(_ input: Tape) -> [(output: Output, tail: Tape)] {
+        let results = input.prefix(while: match)
+        return [(convert(results), input.dropFirst(results.count))]
+    }
+    
+}
+
+public typealias MatchString<T> = Match<Substring, T>
+
+extension Regex : Parser {
+    
+    public func parse(_ input: Substring) -> [(output: Output, tail: Substring)] {
+        guard let match = try? prefixMatch(in: input) else {
+            return []
+        }
+        let result : [(output: Output, tail: Substring)] = [(match.output, input[match.range.upperBound...])]
+        return result
     }
     
 }
