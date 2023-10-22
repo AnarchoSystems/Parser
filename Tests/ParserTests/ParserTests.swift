@@ -43,8 +43,8 @@ final class ParserTests: XCTestCase {
             
         }
         
-        XCTAssertEqual(Repeat(pattern: Exactly("Fizz"), separator: Exactly(",")).parse("Fizz,Fizz,Bla").map(EquatablePair.init),
-                       [EquatablePair(first: ["Fizz", "Fizz"], second: ",Bla")])
+        XCTAssertEqual(Repeat(pattern: Exactly("Fizz"), separator: Exactly(",")).parse("Fizz,Fizz,Fizz,Bla").map(EquatablePair.init),
+                       [EquatablePair(first: ["Fizz", "Fizz", "Fizz"], second: ",Bla")])
         
     }
     
@@ -149,15 +149,16 @@ struct StringUntilWhitespace : Parser {
 
 struct PostAnschrift : ParserWrapper {
     
-    var body : some Parser<Substring, ParsedAddress> {
-        parser.map(ParsedAddress.init)
-    }
-    
     @ParserBuilder
-    var parser : some Parser<Substring, (ParsedPerson, ParsedStreet, ParsedCity)> {
+    var body : some Parser<Substring, (ParsedPerson, ParsedStreet, ParsedCity)> {
         PersonenTeil()
         Strasse()
         Stadt()
+    }
+    
+    func transform(_ bodyResult: (ParsedPerson, ParsedStreet, ParsedCity)) -> ParsedAddress {
+        let (person, street, city) = bodyResult
+        return ParsedAddress(person: person, street: street, city: city)
     }
     
 }
