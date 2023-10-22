@@ -4,7 +4,8 @@ This framework allows you to write code like the following:
 
 ```swift
 
-struct Repeat<Pattern: Parser, Separator : Parser> : ParserWrapper where Pattern.Tape == Separator.Tape {
+struct Repeat<Pattern: Parser, Separator : Parser> : ParserWrapper where
+ Pattern.Tape == Separator.Tape {
             
     let pattern : Pattern
     let separator : Separator
