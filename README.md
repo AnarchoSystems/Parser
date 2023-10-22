@@ -36,3 +36,7 @@ public protocol Parser<Tape, Output> {
 ```
 
 But using wrappers, combinators and the parsers from the lib, you can write easy to understand yet expressive parsers.
+
+## Note
+
+This package was inspired by [Numberphile](https://www.youtube.com/watch?v=dDtZLm7HIJs).
